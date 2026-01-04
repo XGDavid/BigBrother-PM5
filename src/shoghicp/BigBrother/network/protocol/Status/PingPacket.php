@@ -9,6 +9,7 @@
  * BigBrother plugin for PocketMine-MP
  * Copyright (C) 2014-2015 shoghicp <https://github.com/shoghicp/BigBrother>
  * Copyright (C) 2016- BigBrotherTeam
+ * Copyright (C) 2026 - Updated for PocketMine-MP 5.x by XGDAVID <https://github.com/xgdavid>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -30,21 +31,28 @@ declare(strict_types=1);
 namespace shoghicp\BigBrother\network\protocol\Status;
 
 use shoghicp\BigBrother\network\Packet;
+use shoghicp\BigBrother\utils\Binary;
 
-class PingPacket extends Packet{
+class PingPacket extends Packet
+{
 
 	/** @var int */
-	public $time;
+	public int $time = 0;
 
-	public function pid() : int{
+	public function read(string $buffer, int &$offset): void
+	{
+		$this->time = Binary::readLong(substr($buffer, $offset, 8));
+		$offset += 8;
+	}
+
+	public function write(): string
+	{
+		return Binary::writeComputerVarInt($this->pid()) . Binary::writeLong($this->time);
+	}
+
+	public function pid(): int
+	{
 		return 0x01;
 	}
-
-	protected function encode() : void{
-		$this->putLong($this->time);
-	}
-
-	protected function decode() : void{
-		$this->time = $this->getLong();
-	}
 }
+

@@ -1,44 +1,118 @@
-BigBrother
-=============
-[![Build Status](https://travis-ci.org/BigBrotherTeam/BigBrother.svg?branch=master)](https://travis-ci.org/BigBrotherTeam/BigBrother)
-[![Download](https://api.bintray.com/packages/bigbrotherteam/BigBrother/BigBrother/images/download.svg)](https://bintray.com/bigbrotherteam/BigBrother/BigBrother/_latestVersion)
-[![license](https://img.shields.io/github/license/BigBrotherTeam/BigBrother.svg)](https://github.com/BigBrotherTeam/BigBrother/blob/master/LICENSE)
-[![GitHub contributors](https://img.shields.io/github/contributors/BigBrotherTeam/BigBrother.svg)](https://github.com/BigBrotherTeam/BigBrother/graphs/contributors)
-[![Average time to resolve an issue](http://isitmaintained.com/badge/resolution/BigBrotherTeam/BigBrother.svg)](http://isitmaintained.com/project/BigBrotherTeam/BigBrother "Average time to resolve an issue")
-[![Percentage of issues still open](http://isitmaintained.com/badge/open/BigBrotherTeam/BigBrother.svg)](http://isitmaintained.com/project/BigBrotherTeam/BigBrother "Percentage of issues still open")
+# BigBrother for PocketMine-MP 5.x
 
-Welcome to BigBrother, a [shoghicp project that was abandoned](https://github.com/shoghicp/bigbrother) and taken back by the BigBrotherTeam!
--------------
+**Allows Minecraft: Java Edition clients to connect to PocketMine-MP servers**
 
-### Watch Video working on PocketMine-MP!
-[![](http://img.youtube.com/vi/4oaYIW8YuNg/0.jpg)](http://www.youtube.com/watch?v=4oaYIW8YuNg)
+![Chat Working](image.png)
 
-#### Notice
-* This plugin supports use with PocketMine-MP (pmmp). Using spoons will cause many bugs & problems.
-* This plugin supports Minecraft version 1.12.2 ***ONLY.***
-  Currently any other newer versions are experimental, please refer to the last section of this document.
+## ⚠️ IMPORTANT DISCLAIMER
 
-#### Features implemented
-* Login (with premium account or not)
-* Loading chunks
-* Placing/destroying blocks
-* Gamemodes
-* Dropped items
-* Converted blocks IDs '& items IDs'
-* Converted entities metadata
-* Inventories
-* Tiles
-* And many other things!
+**This plugin is EXPERIMENTAL and largely NON-FUNCTIONAL.**
 
-#### Features not yet implemented
-* Crafting
+### What DOES NOT work:
 
-#### Experimental package flavors
+- ❌ **Chunks/World rendering** - You cannot see any blocks
+- ❌ Player visibility between Java and Bedrock
+- ❌ Player list (TAB) integration
+- ❌ Movement synchronization
+- ❌ Block interactions
+- ❌ Entity management
+- ❌ Inventory system
+- ❌ Commands from Java client
+- ❌ Many, many other features
 
-These package flavors below are EXPERIMENTAL which support newer version of Minecraft PC Java Edition.
-Currently, there are a lot of problems and not stable yet.
-Any patches are welcome, and well-debugged and well-described issues are also welcome.
+### What partially works:
 
-* 1.16.4  
-[![Build Status](https://travis-ci.org/BigBrotherTeam/BigBrother.svg?branch=1.16.4)](https://travis-ci.org/BigBrotherTeam/BigBrother)
-[![Download](https://api.bintray.com/packages/bigbrotherteam/BigBrother/BigBrother-1.16.4/images/download.svg)](https://bintray.com/bigbrotherteam/BigBrother/BigBrother-1.16.4/_latestVersion)
+- ✅ Server appears in Java Edition server list
+- ✅ Connection establishment
+- ✅ Basic chat (bidirectional between Java and Bedrock)
+- ✅ Keep-alive (no timeout)
+
+**⚠️ This plugin will likely NOT receive further updates. Use at your own risk.**
+
+---
+
+## History
+
+This is an **experimental port** of BigBrother for PocketMine-MP 5.x. The original BigBrother plugin was designed for
+PMMP 3.x.
+
+- **Original Authors:** shoghicp, BigBrotherTeam
+- **PocketMine-MP 5.x Port (2026):** [XGDAVID](https://github.com/xgdavid)
+
+## Requirements
+
+- PocketMine-MP 5.x
+- PHP 8.1+
+- ext-pmmpthread
+- ext-openssl (for online mode)
+- ext-zlib
+- ext-sockets
+
+## Installation
+
+1. Download or clone this plugin to your `plugins` folder
+2. (Optional) Run `composer install` in the plugin directory for online mode support
+3. Start your PocketMine-MP server
+4. Configure `plugins/BigBrother/config.yml`
+
+## Configuration
+
+```yaml
+# Network interface to bind to
+interface: "0.0.0.0"
+
+# Port for Java Edition clients (default Minecraft Java port)
+port: 25565
+
+# Compression threshold for network packets
+network-compression-threshold: 256
+
+# Server description shown in server list
+motd: "§bPocketMine-MP Server\n§aUsing BigBrother for Java Edition support"
+
+# Use Mojang authentication (requires phpseclib3)
+online-mode: false
+
+# Prefix for Java Edition player names
+desktop-prefix: "PC_"
+```
+
+## Supported Versions
+
+- **Target Minecraft Java Edition:** 1.12.2
+- **Protocol Version:** 340
+- **PocketMine-MP API:** 5.0.0+
+
+## Files Updated for PM5 (2026 by XGDAVID)
+
+The following core files have been rewritten for PocketMine-MP 5.x:
+
+- `BigBrother.php` - Main plugin class
+- `network/ProtocolInterface.php` - Network interface implementation
+- `network/ServerThread.php` - Thread handling for Java connections
+- `network/ServerManager.php` - Connection management
+- `network/Session.php` - Individual client sessions
+- `network/JavaPlayer.php` - Java Edition player handler
+- `network/Packet.php` - Base packet class
+- `network/InboundPacket.php` - Client→Server packets
+- `network/OutboundPacket.php` - Server→Client packets
+- `utils/Binary.php` - Binary data utilities
+- `utils/ConvertUtils.php` - Data conversion utilities
+
+## Credits
+
+- **shoghicp** - Original BigBrother creator
+- **BigBrotherTeam** - Maintenance and updates
+- **[XGDAVID](https://github.com/xgdavid)** - PocketMine-MP 5.x port (2026)
+- **hmy2001, eternalharvest, SuperMaXAleX, caspervanneck, DrewD3V** - Original contributors
+
+## License
+
+LGPL-3.0
+
+## Links
+
+- [Original Repository](https://github.com/BigBrotherTeam/BigBrother)
+- [PocketMine-MP](https://github.com/pmmp/PocketMine-MP)
+- [Java Edition Protocol](https://wiki.vg/Protocol)
+- [XGDAVID GitHub](https://github.com/xgdavid)

@@ -1,6 +1,6 @@
 {
   "name": "bigbrotherteam/bigbrother",
-  "description": "Allows the connection of Minecraft: PC clients to PocketMine-MP servers",
+  "description": "Allows the connection of Minecraft: Java Edition clients to PocketMine-MP servers",
   "license": "LGPL-3.0",
   "authors": [
     {
@@ -27,29 +27,33 @@
       "name": "DrewD3V",
       "email": "ytapplegamer@gmail.com",
       "role": "Developer"
+    },
+    {
+      "name": "XGDAVID",
+      "role": "Developer"
     }
   ],
   "scripts": {
     "build": [
-      "@composer install --no-dev -o",
-      "@composer reindex",
-      "@php scripts/build"
-    ],
-    "reindex": [
-      "@composer install --no-dev -o",
-      "@php scripts/reindex"
+      "@composer install --no-dev -o"
     ]
   },
   "require": {
-    "php": ">=7.2.0",
-    "ext-pthreads": "*",
+    "php": ">=8.1.0",
+    "ext-pmmpthread": "*",
     "ext-json": "*",
     "ext-openssl": "*",
     "ext-zlib": "*",
     "ext-sockets": "*",
-    "phpseclib/phpseclib": "2.0.17"
+    "phpseclib/phpseclib": "^3.0"
   },
   "require-dev": {
-    "pocketmine/pocketmine-mp": "^3.0"
+    "pocketmine/pocketmine-mp": "^5.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "shoghicp\\BigBrother\\": "src/shoghicp/BigBrother/"
+    }
   }
 }
+

@@ -9,6 +9,7 @@
  * BigBrother plugin for PocketMine-MP
  * Copyright (C) 2014-2015 shoghicp <https://github.com/shoghicp/BigBrother>
  * Copyright (C) 2016- BigBrotherTeam
+ * Copyright (C) 2026 - Updated for PocketMine-MP 5.x by XGDAVID <https://github.com/xgdavid>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -29,215 +30,172 @@ declare(strict_types=1);
 
 namespace shoghicp\BigBrother\network;
 
-use ClassLoader;
 use Exception;
-use ReflectionClass;
-use Thread;
-use Threaded;
-use ThreadedLogger;
+use pmmp\thread\ThreadSafeArray;
+use pocketmine\thread\log\ThreadSafeLogger;
+use pocketmine\thread\Thread;
 
-class ServerThread extends Thread{
+class ServerThread extends Thread
+{
+
+	public const VERSION = "1.12.2";
+	public const PROTOCOL = 340;
 
 	/** @var int */
-	protected $port;
-	/** @var string */
-	protected $interface;
-	/** @var ThreadedLogger */
-	protected $logger;
-	/** @var ClassLoader */
-	protected $loader;
-	/** @var string */
-	protected $data;
+	protected int $port;
 
-	/** @var array */
-	public $loadPaths;
+	/** @var string */
+	protected string $interface;
+
+	/** @var ThreadSafeLogger */
+	protected ThreadSafeLogger $logger;
+
+	/** @var string */
+	protected string $data;
 
 	/** @var bool */
-	protected $shutdown;
+	protected bool $shutdown = false;
 
-	/** @var Threaded */
-	protected $externalQueue;
-	/** @var Threaded */
-	protected $internalQueue;
+	/** @var ThreadSafeArray */
+	protected ThreadSafeArray $externalQueue;
 
-	/** @var resource */
-	protected $externalSocket;
-	/** @var resource */
-	protected $internalSocket;
+	/** @var ThreadSafeArray */
+	protected ThreadSafeArray $internalQueue;
 
 	/**
-	 * @param ThreadedLogger $logger
-	 * @param ClassLoader    $loader
-	 * @param int             $port 1-65536
-	 * @param string          $interface
-	 * @param string          $motd
-	 * @param string|null     $icon
-	 * @param bool            $autoStart
+	 * @param ThreadSafeLogger $logger
+	 * @param int $port 1-65536
+	 * @param string $interface
+	 * @param string $motd
+	 * @param string|null $icon
 	 * @throws Exception
 	 */
-	public function __construct(ThreadedLogger $logger, ClassLoader $loader, int $port, string $interface = "0.0.0.0", string $motd = "Minecraft: PE server", string $icon = null, bool $autoStart = true){
+	public function __construct(
+		ThreadSafeLogger $logger,
+		int              $port,
+		string           $interface = "0.0.0.0",
+		string           $motd = "Minecraft Server",
+		?string          $icon = null
+	)
+	{
 		$this->port = $port;
-		if($port < 1 or $port > 65536){
+		if ($port < 1 || $port > 65536) {
 			throw new Exception("Invalid port range");
 		}
 
 		$this->interface = $interface;
 		$this->logger = $logger;
-		$this->loader = $loader;
 
 		$this->data = serialize([
 			"motd" => $motd,
 			"icon" => $icon
 		]);
 
-		$loadPaths = [];
-		$this->addDependency($loadPaths, new ReflectionClass($logger));
-		$this->addDependency($loadPaths, new ReflectionClass($loader));
-		$this->loadPaths = array_reverse($loadPaths);
-		$this->shutdown = false;
-
-		$this->externalQueue = new Threaded;
-		$this->internalQueue = new Threaded;
-
-		if(($sockets = stream_socket_pair((strtoupper(substr(PHP_OS, 0, 3)) === 'WIN' ? STREAM_PF_INET : STREAM_PF_UNIX), STREAM_SOCK_STREAM, STREAM_IPPROTO_IP)) === false){
-			throw new Exception("Could not create IPC streams. Reason: ".socket_strerror(socket_last_error()));
-		}
-
-		$this->internalSocket = $sockets[0];
-		stream_set_blocking($this->internalSocket, false);
-		$this->externalSocket = $sockets[1];
-		stream_set_blocking($this->externalSocket, false);
-
-		if($autoStart){
-			$this->start();
-		}
-	}
-
-	/**
-	 * @param array            &$loadPaths
-	 * @param ReflectionClass $dep
-	 */
-	protected function addDependency(array &$loadPaths, ReflectionClass $dep){
-		if($dep->getFileName() !== false){
-			$loadPaths[$dep->getName()] = $dep->getFileName();
-		}
-
-		if($dep->getParentClass() instanceof ReflectionClass){
-			$this->addDependency($loadPaths, $dep->getParentClass());
-		}
-
-		foreach($dep->getInterfaces() as $interface){
-			$this->addDependency($loadPaths, $interface);
-		}
+		$this->externalQueue = new ThreadSafeArray();
+		$this->internalQueue = new ThreadSafeArray();
 	}
 
 	/**
 	 * @return bool true if this thread state is shutdown
 	 */
-	public function isShutdown() : bool{
+	public function isShutdown(): bool
+	{
 		return $this->shutdown === true;
 	}
 
-	public function shutdown(){
+	public function shutdown(): void
+	{
 		$this->shutdown = true;
 	}
 
 	/**
 	 * @return int port
 	 */
-	public function getPort() : int{
+	public function getPort(): int
+	{
 		return $this->port;
 	}
 
 	/**
 	 * @return string interface
 	 */
-	public function getInterface() : string{
+	public function getInterface(): string
+	{
 		return $this->interface;
 	}
 
 	/**
-	 * @return ThreadedLogger logger
+	 * @return ThreadSafeLogger logger
 	 */
-	public function getLogger() : ThreadedLogger{
+	public function getLogger(): ThreadSafeLogger
+	{
 		return $this->logger;
 	}
 
 	/**
-	 * @return Threaded external queue
+	 * @return ThreadSafeArray external queue
 	 */
-	public function getExternalQueue() : Threaded{
+	public function getExternalQueue(): ThreadSafeArray
+	{
 		return $this->externalQueue;
 	}
 
 	/**
-	 * @return Threaded internal queue
+	 * @return ThreadSafeArray internal queue
 	 */
-	public function getInternalQueue() : Threaded{
+	public function getInternalQueue(): ThreadSafeArray
+	{
 		return $this->internalQueue;
-	}
-
-	/**
-	 * @return resource internal socket
-	 */
-	public function getInternalSocket(){
-		return $this->internalSocket;
 	}
 
 	/**
 	 * @param string $str
 	 */
-	public function pushMainToThreadPacket(string $str) : void{
+	public function pushMainToThreadPacket(string $str): void
+	{
 		$this->internalQueue[] = $str;
-		@fwrite($this->externalSocket, "\xff", 1); //Notify
 	}
 
 	/**
 	 * @return string|null
 	 */
-	public function readMainToThreadPacket() : ?string{
+	public function readMainToThreadPacket(): ?string
+	{
 		return $this->internalQueue->shift();
 	}
 
 	/**
 	 * @param string $str
 	 */
-	public function pushThreadToMainPacket(string $str) : void{
+	public function pushThreadToMainPacket(string $str): void
+	{
 		$this->externalQueue[] = $str;
 	}
 
 	/**
 	 * @return string|null
 	 */
-	public function readThreadToMainPacket() : ?string{
+	public function readThreadToMainPacket(): ?string
+	{
 		return $this->externalQueue->shift();
 	}
 
-	public function shutdownHandler() : void{
-		if($this->shutdown !== true){
-			$this->getLogger()->emergency("[ServerThread #". Thread::getCurrentThreadId() ."] ServerThread crashed!");
+	public function shutdownHandler(): void
+	{
+		if ($this->shutdown !== true) {
+			$this->logger->emergency("[ServerThread] ServerThread crashed!");
 		}
 	}
 
 	/**
 	 * @override
 	 */
-	public function run(){
-		//Load removed dependencies, can't use require_once()
-		foreach($this->loadPaths as $name => $path){
-			if(!class_exists($name, false) and !interface_exists($name, false)){
-				/** @noinspection PhpIncludeInspection */
-				require $path;
-			}
-		}
-		$this->loader->register();
-
+	protected function onRun(): void
+	{
 		register_shutdown_function([$this, "shutdownHandler"]);
 
-		$data = unserialize($this->data);
+		$data = unserialize($this->data, ["allowed_classes" => false]);
 		new ServerManager($this, $this->port, $this->interface, $data["motd"], $data["icon"]);
 	}
-
-	public function setGarbage(){
-	}
 }
+

@@ -9,6 +9,7 @@
  * BigBrother plugin for PocketMine-MP
  * Copyright (C) 2014-2015 shoghicp <https://github.com/shoghicp/BigBrother>
  * Copyright (C) 2016- BigBrotherTeam
+ * Copyright (C) 2026 - Updated for PocketMine-MP 5.x by XGDAVID <https://github.com/xgdavid>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -30,198 +31,290 @@ declare(strict_types=1);
 namespace shoghicp\BigBrother;
 
 use InvalidArgumentException;
-use phpseclib\Crypt\RSA;
-use phpseclib\Crypt\AES;
-
-use pocketmine\plugin\PluginBase;
-use pocketmine\network\mcpe\protocol\ProtocolInfo as Info;
-use pocketmine\network\mcpe\protocol\TextPacket;
-use pocketmine\block\Block;
-use pocketmine\block\Chest;
-use pocketmine\event\player\PlayerRespawnEvent;
-use pocketmine\event\block\BlockPlaceEvent;
+use phpseclib3\Crypt\RSA;
 use pocketmine\event\block\BlockBreakEvent;
+use pocketmine\event\block\BlockPlaceEvent;
 use pocketmine\event\Listener;
+use pocketmine\event\player\PlayerChatEvent;
+use pocketmine\event\player\PlayerJoinEvent;
+use pocketmine\event\player\PlayerMoveEvent;
+use pocketmine\event\player\PlayerQuitEvent;
+use pocketmine\event\player\PlayerRespawnEvent;
+use pocketmine\plugin\PluginBase;
 use pocketmine\utils\TextFormat;
-
-use shoghicp\BigBrother\network\ServerManager;
 use shoghicp\BigBrother\network\ProtocolInterface;
+use shoghicp\BigBrother\network\ServerThread;
 use shoghicp\BigBrother\network\Translator;
-use shoghicp\BigBrother\network\protocol\Play\Server\RespawnPacket;
-use shoghicp\BigBrother\network\protocol\Play\Server\OpenSignEditorPacket;
 use shoghicp\BigBrother\utils\ConvertUtils;
-use shoghicp\BigBrother\utils\ColorUtils;
+use Throwable;
 
-class BigBrother extends PluginBase implements Listener{
+class BigBrother extends PluginBase implements Listener
+{
 
-	/** @var ProtocolInterface */
-	private $interface;
-
-	/** @var RSA */
-	protected $rsa;
-
+	/** @var mixed RSA key object */
+	protected mixed $rsaKey = null;
 	/** @var string */
-	protected $privateKey;
-
+	protected string $privateKey = "";
 	/** @var string */
-	protected $publicKey;
-
+	protected string $publicKey = "";
 	/** @var bool */
-	protected $onlineMode;
-
-	/** @var Translator */
-	protected $translator;
-
+	protected bool $onlineMode = false;
+	/** @var Translator|null */
+	protected ?Translator $translator = null;
+	/** @var string */
+	protected string $desktopPrefix = "PC_";
 	/** @var array */
-	protected $profileCache = [];
+	protected array $profileCache = [];
+	/** @var string */
+	protected string $dimensionCodec = "";
+	/** @var string */
+	protected string $dimension = "";
+	/** @var ProtocolInterface|null */
+	private ?ProtocolInterface $interface = null;
 
 	/**
-	 * @override
+	 * @param string|null $message
+	 * @param int $type
+	 * @param array|null $parameters
+	 * @return string
 	 */
-	public function onEnable(){
-		$enable = true;
-		foreach($this->getServer()->getNetwork()->getInterfaces() as $interface){
-			if($interface instanceof ProtocolInterface){
-				$enable = false;
-			}
+	public static function toJSON(?string $message, int $type = 1, ?array $parameters = []): string
+	{
+		$result = json_decode(self::toJSONInternal($message ?? ""), true);
+
+		if ($result === null) {
+			return json_encode(["text" => $message ?? ""]);
 		}
 
-		if($enable){
-			if(Info::CURRENT_PROTOCOL === 422){
-				ConvertUtils::init();
-
-				$this->saveDefaultConfig();
-				$this->saveResource("server-icon.png", false);
-				$this->saveResource("color_index.dat", true);
-				$this->saveResource("openssl.cnf", false);
-				$this->reloadConfig();
-
-				ColorUtils::loadColorIndex($this->getDataFolder()."color_index.dat");
-
-				$this->getLogger()->info("OS: ".php_uname());
-				$this->getLogger()->info("PHP version: ".PHP_VERSION);
-
-				$this->getLogger()->info("PMMP Server version: ".$this->getServer()->getVersion());
-				$this->getLogger()->info("PMMP API version: ".$this->getServer()->getApiVersion());
-
-				if(!$this->isPhar() and is_dir($this->getFile().".git")){
-					$cwd = getcwd();
-					chdir($this->getFile());
-					@exec("git describe --tags --always --dirty", $revision, $value);
-					if($value == 0){
-						$this->getLogger()->info("BigBrother revision: ".$revision[0]);
-					}
-					chdir($cwd);
-				}elseif(($resource = $this->getResource("revision")) and ($revision = stream_get_contents($resource))){
-					$this->getLogger()->info("BigBrother.phar; revision: ".$revision);
-				}
-
-				if(!$this->setupComposer()){
-					$this->getLogger()->critical("Composer autoloader not found");
-					$this->getServer()->getPluginManager()->disablePlugin($this);
-					return;
-				}
-
-				$aes = new AES(AES::MODE_CFB8);
-				switch($aes->getEngine()){
-					case AES::ENGINE_OPENSSL:
-						$this->getLogger()->info("Use openssl as AES encryption engine.");
-					break;
-					case AES::ENGINE_MCRYPT:
-						$this->getLogger()->warning("Use obsolete mcrypt for AES encryption. Try to install openssl extension instead!!");
-					break;
-					case AES::ENGINE_INTERNAL:
-						$this->getLogger()->warning("Use phpseclib internal engine for AES encryption, this may impact on performance. To improve them, try to install openssl extension.");
-					break;
-				}
-
-				$this->rsa = new RSA();
-				switch(constant("CRYPT_RSA_MODE")){
-					case RSA::MODE_OPENSSL:
-						$this->rsa->configFile = $this->getDataFolder() . "openssl.cnf";
-						$this->getLogger()->info("Use openssl as RSA encryption engine.");
-					break;
-					case RSA::MODE_INTERNAL:
-						$this->getLogger()->info("Use phpseclib internal engine for RSA encryption.");
-					break;
-				}
-
-				if($aes->getEngine() === AES::ENGINE_OPENSSL or constant("CRYPT_RSA_MODE") === RSA::MODE_OPENSSL){
-					ob_start();
-					@phpinfo();
-					preg_match_all('#OpenSSL (Header|Library) Version => (.*)#im', ob_get_contents() ?? "", $matches);
-					ob_end_clean();
-
-					foreach(array_map(null, $matches[1], $matches[2]) as $version){
-						$this->getLogger()->info("OpenSSL ".$version[0]." version: ".$version[1]);
-					}
-				}
-
-				if(!$this->getConfig()->exists("motd")){
-					$this->getLogger()->warning("No motd has been set. The server description will be empty.");
-					$this->getServer()->getPluginManager()->disablePlugin($this);
-					return;
-				}
-
-				$this->onlineMode = (bool) $this->getConfig()->get("online-mode");
-				if($this->onlineMode){
-					$this->getLogger()->info("Server is being started in the background");
-					$this->getLogger()->info("Generating keypair");
-					$this->rsa->setPrivateKeyFormat(RSA::PRIVATE_FORMAT_PKCS1);
-					$this->rsa->setPublicKeyFormat(RSA::PUBLIC_FORMAT_PKCS8);
-					$this->rsa->setEncryptionMode(RSA::ENCRYPTION_PKCS1);
-					$keys = $this->rsa->createKey();//1024 bits
-					$this->privateKey = $keys["privatekey"];
-					$this->publicKey = $keys["publickey"];
-					$this->rsa->loadKey($this->privateKey);
-				}
-
-				$this->getLogger()->info("Starting Minecraft: PC server on ".($this->getIp() === "0.0.0.0" ? "*" : $this->getIp()).":".$this->getPort()." version ".ServerManager::VERSION);
-
-				$this->getServer()->getPluginManager()->registerEvents($this, $this);
-
-				$this->translator = new Translator();
-				$this->interface = new ProtocolInterface($this, $this->getServer(), $this->translator, (int) $this->getConfig()->get("network-compression-threshold"));
-				$this->getServer()->getNetwork()->registerInterface($this->interface);
-			}else{
-				$this->getLogger()->critical("Couldn't find a protocol translator for #".Info::CURRENT_PROTOCOL .", disabling plugin");
-				$this->getServer()->getPluginManager()->disablePlugin($this);
-			}
+		if (isset($result["extra"]) && count($result["extra"]) === 0) {
+			unset($result["extra"]);
 		}
+
+		return json_encode($result, JSON_UNESCAPED_SLASHES) ?: "{}";
 	}
 
 	/**
-	 * @return string ip address
+	 * Returns an JSON-formatted string with colors/markup
+	 *
+	 * @param string|string[] $string
+	 * @return string
+	 * @internal
 	 */
-	public function getIp() : string{
-		return (string) $this->getConfig()->get("interface");
-	}
+	public static function toJSONInternal($string): string
+	{
+		if (!is_array($string)) {
+			$string = TextFormat::tokenize($string);
+		}
+		$newString = [];
+		$pointer = &$newString;
+		$color = "white";
+		$bold = false;
+		$italic = false;
+		$underlined = false;
+		$strikethrough = false;
+		$obfuscated = false;
+		$index = 0;
 
-	/**
-	 * @return int port
-	 */
-	public function getPort() : int{
-		return (int) $this->getConfig()->get("port");
+		foreach ($string as $token) {
+			if (isset($pointer["text"])) {
+				if (!isset($newString["extra"])) {
+					$newString["extra"] = [];
+				}
+				$newString["extra"][$index] = [];
+				$pointer = &$newString["extra"][$index];
+				if ($color !== "white") {
+					$pointer["color"] = $color;
+				}
+				if ($bold) {
+					$pointer["bold"] = true;
+				}
+				if ($italic) {
+					$pointer["italic"] = true;
+				}
+				if ($underlined) {
+					$pointer["underlined"] = true;
+				}
+				if ($strikethrough) {
+					$pointer["strikethrough"] = true;
+				}
+				if ($obfuscated) {
+					$pointer["obfuscated"] = true;
+				}
+				++$index;
+			}
+			switch ($token) {
+				case TextFormat::BOLD:
+					if (!$bold) {
+						$pointer["bold"] = true;
+						$bold = true;
+					}
+					break;
+				case TextFormat::OBFUSCATED:
+					if (!$obfuscated) {
+						$pointer["obfuscated"] = true;
+						$obfuscated = true;
+					}
+					break;
+				case TextFormat::ITALIC:
+					if (!$italic) {
+						$pointer["italic"] = true;
+						$italic = true;
+					}
+					break;
+				case TextFormat::UNDERLINE:
+					if (!$underlined) {
+						$pointer["underlined"] = true;
+						$underlined = true;
+					}
+					break;
+				case TextFormat::STRIKETHROUGH:
+					if (!$strikethrough) {
+						$pointer["strikethrough"] = true;
+						$strikethrough = true;
+					}
+					break;
+				case TextFormat::RESET:
+					if ($color !== "white") {
+						$pointer["color"] = "white";
+						$color = "white";
+					}
+					if ($bold) {
+						$pointer["bold"] = false;
+						$bold = false;
+					}
+					if ($italic) {
+						$pointer["italic"] = false;
+						$italic = false;
+					}
+					if ($underlined) {
+						$pointer["underlined"] = false;
+						$underlined = false;
+					}
+					if ($strikethrough) {
+						$pointer["strikethrough"] = false;
+						$strikethrough = false;
+					}
+					if ($obfuscated) {
+						$pointer["obfuscated"] = false;
+						$obfuscated = false;
+					}
+					break;
+
+				// Colors
+				case TextFormat::BLACK:
+					$pointer["color"] = "black";
+					$color = "black";
+					break;
+				case TextFormat::DARK_BLUE:
+					$pointer["color"] = "dark_blue";
+					$color = "dark_blue";
+					break;
+				case TextFormat::DARK_GREEN:
+					$pointer["color"] = "dark_green";
+					$color = "dark_green";
+					break;
+				case TextFormat::DARK_AQUA:
+					$pointer["color"] = "dark_aqua";
+					$color = "dark_aqua";
+					break;
+				case TextFormat::DARK_RED:
+					$pointer["color"] = "dark_red";
+					$color = "dark_red";
+					break;
+				case TextFormat::DARK_PURPLE:
+					$pointer["color"] = "dark_purple";
+					$color = "dark_purple";
+					break;
+				case TextFormat::GOLD:
+					$pointer["color"] = "gold";
+					$color = "gold";
+					break;
+				case TextFormat::GRAY:
+					$pointer["color"] = "gray";
+					$color = "gray";
+					break;
+				case TextFormat::DARK_GRAY:
+					$pointer["color"] = "dark_gray";
+					$color = "dark_gray";
+					break;
+				case TextFormat::BLUE:
+					$pointer["color"] = "blue";
+					$color = "blue";
+					break;
+				case TextFormat::GREEN:
+					$pointer["color"] = "green";
+					$color = "green";
+					break;
+				case TextFormat::AQUA:
+					$pointer["color"] = "aqua";
+					$color = "aqua";
+					break;
+				case TextFormat::RED:
+					$pointer["color"] = "red";
+					$color = "red";
+					break;
+				case TextFormat::LIGHT_PURPLE:
+					$pointer["color"] = "light_purple";
+					$color = "light_purple";
+					break;
+				case TextFormat::YELLOW:
+					$pointer["color"] = "yellow";
+					$color = "yellow";
+					break;
+				case TextFormat::WHITE:
+					$pointer["color"] = "white";
+					$color = "white";
+					break;
+				default:
+					$pointer["text"] = $token;
+					break;
+			}
+		}
+
+		if (isset($newString["extra"])) {
+			foreach ($newString["extra"] as $k => $d) {
+				if (!isset($d["text"])) {
+					unset($newString["extra"][$k]);
+				}
+			}
+		}
+
+		$result = json_encode($newString, JSON_UNESCAPED_SLASHES);
+		if ($result === false) {
+			throw new InvalidArgumentException("Failed to encode result JSON: " . json_last_error_msg());
+		}
+		return $result;
 	}
 
 	/**
 	 * @return string motd
 	 */
-	public function getMotd() : string{
-		return (string) $this->getConfig()->get("motd");
+	public function getMotd(): string
+	{
+		return (string)$this->getConfig()->get("motd", $this->getServer()->getMotd());
 	}
 
 	/**
 	 * @return bool
 	 */
-	public function isOnlineMode(): bool{
+	public function isOnlineMode(): bool
+	{
 		return $this->onlineMode;
+	}
+
+	/**
+	 * @return string
+	 */
+	public function getDesktopPrefix(): string
+	{
+		return $this->desktopPrefix;
 	}
 
 	/**
 	 * @return string ASN1 Public Key
 	 */
-	public function getASN1PublicKey() : string{
+	public function getASN1PublicKey(): string
+	{
 		$key = explode("\n", $this->publicKey);
 		array_pop($key);
 		array_shift($key);
@@ -232,8 +325,12 @@ class BigBrother extends PluginBase implements Listener{
 	 * @param string $cipher cipher text
 	 * @return string plain text
 	 */
-	public function decryptBinary(string $cipher) : string{
-		return $this->rsa->decrypt($cipher);
+	public function decryptBinary(string $cipher): string
+	{
+		if ($this->rsaKey === null) {
+			return "";
+		}
+		return $this->rsaKey->decrypt($cipher);
 	}
 
 	/**
@@ -241,10 +338,11 @@ class BigBrother extends PluginBase implements Listener{
 	 * @param int $timeout
 	 * @return array|null
 	 */
-	public function getProfileCache(string $username, int $timeout = 60): ?array{
-		if(isset($this->profileCache[$username]) && (microtime(true) - $this->profileCache[$username]["timestamp"] < $timeout)){
+	public function getProfileCache(string $username, int $timeout = 60): ?array
+	{
+		if (isset($this->profileCache[$username]) && (microtime(true) - $this->profileCache[$username]["timestamp"] < $timeout)) {
 			return $this->profileCache[$username]["profile"];
-		}else{
+		} else {
 			unset($this->profileCache[$username]);
 			return null;
 		}
@@ -252,9 +350,10 @@ class BigBrother extends PluginBase implements Listener{
 
 	/**
 	 * @param string $username
-	 * @param array profile
+	 * @param array $profile
 	 */
-	public function setProfileCache(string $username, array $profile) : void{
+	public function setProfileCache(string $username, array $profile): void
+	{
 		$this->profileCache[$username] = [
 			"timestamp" => microtime(true),
 			"profile" => $profile
@@ -262,22 +361,32 @@ class BigBrother extends PluginBase implements Listener{
 	}
 
 	/**
+	 * Return string of Compound Tag
+	 * @return string
+	 */
+	public function getDimensionCodec(): string
+	{
+		return $this->dimensionCodec;
+	}
+
+	/**
+	 * Return string of Compound Tag
+	 * @return string
+	 */
+	public function getDimension(): string
+	{
+		return $this->dimension;
+	}
+
+	/**
 	 * @param PlayerRespawnEvent $event
 	 *
 	 * @priority NORMAL
 	 */
-	public function onRespawn(PlayerRespawnEvent $event) : void{
+	public function onRespawn(PlayerRespawnEvent $event): void
+	{
 		$player = $event->getPlayer();
-		if($player instanceof DesktopPlayer){
-			$pk = new RespawnPacket();
-			$pk->dimension = $player->bigBrother_getDimension();
-			$pk->difficulty = $player->getServer()->getDifficulty();
-			$pk->gamemode = $player->getGamemode();
-			$pk->levelType = "default";
-			$player->putRawPacket($pk);
-
-			$player->bigBrother_respawn();
-		}
+		// TODO: Handle desktop player respawn
 	}
 
 	/**
@@ -285,35 +394,11 @@ class BigBrother extends PluginBase implements Listener{
 	 *
 	 * @priority NORMAL
 	 */
-	public function onPlace(BlockPlaceEvent $event) : void{
+	public function onPlace(BlockPlaceEvent $event): void
+	{
 		$player = $event->getPlayer();
-		$block = $event->getBlock();
-		if($player instanceof DesktopPlayer){
-			if($block->getId() === Block::SIGN_POST or $block->getId() === Block::WALL_SIGN){
-				$pk = new OpenSignEditorPacket();
-				$pk->x = $block->x;
-				$pk->y = $block->y;
-				$pk->z = $block->z;
-				$player->putRawPacket($pk);
-			}
-		}
-
-		if($block instanceof Chest){
-			$num_side_chest = 0;
-			for($i = 2; $i <= 5; ++$i){
-				if(($side_chest = $block->getSide($i))->getId() === $block->getId()){
-					++$num_side_chest;
-					for($j = 2; $j <= 5; ++$j){
-						if($side_chest->getSide($j)->getId() === $side_chest->getId()){//Cancel block placement event if side chest is already large-chest
-							$event->setCancelled();
-						}
-					}
-				}
-			}
-			if($num_side_chest > 1){//Cancel if there are more than one chest that can be large-chest
-				$event->setCancelled();
-			}
-		}
+		$block = $event->getBlockAgainst();
+		// TODO: Handle sign placement for desktop players
 	}
 
 	/**
@@ -321,305 +406,222 @@ class BigBrother extends PluginBase implements Listener{
 	 *
 	 * @priority NORMAL
 	 */
-	public function onBreak(BlockBreakEvent $event) : void{
+	public function onBreak(BlockBreakEvent $event): void
+	{
 		$player = $event->getPlayer();
-		if($player instanceof DesktopPlayer){
-			$event->setInstaBreak(true);//ItemFrame and other blocks
-		}
-	}
-
-	private function setupComposer() : bool{
-		$base = $this->getFile();
-		$data = $this->getDataFolder();
-		$setup = $data . 'composer-setup.php';
-		$composer = $data . 'composer.phar';
-		$autoload = $base . 'vendor/autoload.php';
-
-		if(!$this->isPhar() and !is_file($autoload)){
-			$this->getLogger()->info("Trying to setup composer...");
-			copy('https://getcomposer.org/installer', $setup);
-			exec(join(' ', [PHP_BINARY, $setup, '--install-dir', $data]));
-
-			$this->getLogger()->info("Trying to install composer dependencies...");
-			exec(join(' ', [PHP_BINARY, $composer, 'install', '-d', $base, '--no-dev', '-o']));
-		}
-
-		if(is_file($autoload)){
-			$this->getLogger()->info("Registering Composer autoloader...");
-			__require($autoload);
-			return true;
-		}else{
-			return false;
-		}
+		// TODO: Handle desktop player block breaking
 	}
 
 	/**
-	 * @param string|null $message
-	 * @param int         $type
-	 * @param array|null  $parameters
-	 * @return string
-	 */
-	public static function toJSON(?string $message, int $type = 1, ?array $parameters = []) : string{
-		$result = json_decode(BigBrother::toJSONInternal($message), true);
-
-		switch($type){
-			case TextPacket::TYPE_TRANSLATION:
-				unset($result["text"]);
-				$message = TextFormat::clean($message);
-
-				if(substr($message, 0, 1) === "["){//chat.type.admin
-					$result["translate"] = "chat.type.admin";
-					$result["color"] = "gray";
-					$result["italic"] = true;
-					unset($result["extra"]);
-
-					$result["with"][] = ["text" => substr($message, 1, strpos($message, ":") - 1)];
-
-					if($message === "[CONSOLE: Reload complete.]" or $message === "[CONSOLE: Reloading server...]"){//blame pmmp
-						$result["with"][] = ["translate" => substr(substr($message, strpos($message, ":") + 2), 0, - 1), "color" => "yellow"];
-					}else{
-						$result["with"][] = ["translate" => substr(substr($message, strpos($message, ":") + 2), 0, - 1)];
-					}
-
-					$with = &$result["with"][1];
-				}else{
-					$result["translate"] = str_replace("%", "", $message);
-
-					$with = &$result;
-				}
-
-				foreach($parameters as $parameter){
-					if(strpos($parameter, "%") !== false){
-						$with["with"][] = ["translate" => str_replace("%", "", $parameter)];
-					}else{
-						$with["with"][] = ["text" => $parameter];
-					}
-				}
-			break;
-			case TextPacket::TYPE_POPUP:
-			case TextPacket::TYPE_TIP://Just to be sure
-				if(isset($result["text"])){
-					$result["text"] = str_replace("\n", "", $message);
-				}
-
-				if(isset($result["extra"])){
-					unset($result["extra"]);
-				}
-			break;
-		}
-
-		if(isset($result["extra"])){
-			if(count($result["extra"]) === 0){
-				unset($result["extra"]);
-			}
-		}
-
-		$result = json_encode($result, JSON_UNESCAPED_SLASHES);
-		return $result;
-	}
-
-	/**
-	 * Returns an JSON-formatted string with colors/markup
+	 * @param PlayerMoveEvent $event
 	 *
-	 * @internal
-	 * @param string|string[] $string
-	 * @return string
+	 * @priority NORMAL
 	 */
-	public static function toJSONInternal($string) : string{
-		if(!is_array($string)){
-			$string = TextFormat::tokenize($string);
-		}
-		$newString = [];
-		$pointer =& $newString;
-		$color = "white";
-		$bold = false;
-		$italic = false;
-		$underlined = false;
-		$strikethrough = false;
-		$obfuscated = false;
-		$index = 0;
-
-		foreach($string as $token){
-			if(isset($pointer["text"])){
-				if(!isset($newString["extra"])){
-					$newString["extra"] = [];
-				}
-				$newString["extra"][$index] = [];
-				$pointer =& $newString["extra"][$index];
-				if($color !== "white"){
-					$pointer["color"] = $color;
-				}
-				if($bold){
-					$pointer["bold"] = true;
-				}
-				if($italic){
-					$pointer["italic"] = true;
-				}
-				if($underlined){
-					$pointer["underlined"] = true;
-				}
-				if($strikethrough){
-					$pointer["strikethrough"] = true;
-				}
-				if($obfuscated){
-					$pointer["obfuscated"] = true;
-				}
-				++$index;
-			}
-			switch($token){
-				case TextFormat::BOLD:
-					if(!$bold){
-						$pointer["bold"] = true;
-						$bold = true;
-					}
-				break;
-				case TextFormat::OBFUSCATED:
-					if(!$obfuscated){
-						$pointer["obfuscated"] = true;
-						$obfuscated = true;
-					}
-				break;
-				case TextFormat::ITALIC:
-					if(!$italic){
-						$pointer["italic"] = true;
-						$italic = true;
-					}
-				break;
-				case TextFormat::UNDERLINE:
-					if(!$underlined){
-						$pointer["underlined"] = true;
-						$underlined = true;
-					}
-				break;
-				case TextFormat::STRIKETHROUGH:
-					if(!$strikethrough){
-						$pointer["strikethrough"] = true;
-						$strikethrough = true;
-					}
-				break;
-				case TextFormat::RESET:
-					if($color !== "white"){
-						$pointer["color"] = "white";
-						$color = "white";
-					}
-					if($bold){
-						$pointer["bold"] = false;
-						$bold = false;
-					}
-					if($italic){
-						$pointer["italic"] = false;
-						$italic = false;
-					}
-					if($underlined){
-						$pointer["underlined"] = false;
-						$underlined = false;
-					}
-					if($strikethrough){
-						$pointer["strikethrough"] = false;
-						$strikethrough = false;
-					}
-					if($obfuscated){
-						$pointer["obfuscated"] = false;
-						$obfuscated = false;
-					}
-				break;
-
-				//Colors
-				case TextFormat::BLACK:
-					$pointer["color"] = "black";
-					$color = "black";
-				break;
-				case TextFormat::DARK_BLUE:
-					$pointer["color"] = "dark_blue";
-					$color = "dark_blue";
-				break;
-				case TextFormat::DARK_GREEN:
-					$pointer["color"] = "dark_green";
-					$color = "dark_green";
-				break;
-				case TextFormat::DARK_AQUA:
-					$pointer["color"] = "dark_aqua";
-					$color = "dark_aqua";
-				break;
-				case TextFormat::DARK_RED:
-					$pointer["color"] = "dark_red";
-					$color = "dark_red";
-				break;
-				case TextFormat::DARK_PURPLE:
-					$pointer["color"] = "dark_purple";
-					$color = "dark_purple";
-				break;
-				case TextFormat::GOLD:
-					$pointer["color"] = "gold";
-					$color = "gold";
-				break;
-				case TextFormat::GRAY:
-					$pointer["color"] = "gray";
-					$color = "gray";
-				break;
-				case TextFormat::DARK_GRAY:
-					$pointer["color"] = "dark_gray";
-					$color = "dark_gray";
-				break;
-				case TextFormat::BLUE:
-					$pointer["color"] = "blue";
-					$color = "blue";
-				break;
-				case TextFormat::GREEN:
-					$pointer["color"] = "green";
-					$color = "green";
-				break;
-				case TextFormat::AQUA:
-					$pointer["color"] = "aqua";
-					$color = "aqua";
-				break;
-				case TextFormat::RED:
-					$pointer["color"] = "red";
-					$color = "red";
-				break;
-				case TextFormat::LIGHT_PURPLE:
-					$pointer["color"] = "light_purple";
-					$color = "light_purple";
-				break;
-				case TextFormat::YELLOW:
-					$pointer["color"] = "yellow";
-					$color = "yellow";
-				break;
-				case TextFormat::WHITE:
-					$pointer["color"] = "white";
-					$color = "white";
-				break;
-				default:
-					$pointer["text"] = $token;
-				break;
-			}
-		}
-
-		if(isset($newString["extra"])){
-			foreach($newString["extra"] as $k => $d){
-				if(!isset($d["text"])){
-					unset($newString["extra"][$k]);
-				}
-			}
-		}
-
-		$result = json_encode($newString, JSON_UNESCAPED_SLASHES);
-		if($result === false){
-			throw new InvalidArgumentException("Failed to encode result JSON: " . json_last_error_msg());
-		}
-		return $result;
+	public function onPlayerMove(PlayerMoveEvent $event): void
+	{
+		$player = $event->getPlayer();
+		// TODO: Handle desktop player movement
 	}
 
+	/**
+	 * Handle Bedrock player chat and send to Java players
+	 *
+	 * @param PlayerChatEvent $event
+	 * @priority MONITOR
+	 */
+	public function onPlayerChat(PlayerChatEvent $event): void
+	{
+		if ($event->isCancelled()) {
+			return;
+		}
+
+		$player = $event->getPlayer();
+		$message = "<" . $player->getName() . "> " . $event->getMessage();
+
+		// Send to all Java players
+		if ($this->interface !== null) {
+			$this->interface->broadcastChatToJava($message);
+		}
+	}
+
+	/**
+	 * Handle Bedrock player join and notify Java players
+	 *
+	 * @param PlayerJoinEvent $event
+	 * @priority MONITOR
+	 */
+	public function onPlayerJoin(PlayerJoinEvent $event): void
+	{
+		$player = $event->getPlayer();
+		$message = "§e" . $player->getName() . " joined the game";
+
+		if ($this->interface !== null) {
+			$this->interface->broadcastChatToJava($message);
+		}
+	}
+
+	/**
+	 * Handle Bedrock player quit and notify Java players
+	 *
+	 * @param PlayerQuitEvent $event
+	 * @priority MONITOR
+	 */
+	public function onPlayerQuit(PlayerQuitEvent $event): void
+	{
+		$player = $event->getPlayer();
+		$message = "§e" . $player->getName() . " left the game";
+
+		if ($this->interface !== null) {
+			$this->interface->broadcastChatToJava($message);
+		}
+	}
+
+	/**
+	 * Broadcast a message from Java player to all Bedrock players
+	 *
+	 * @param string $username
+	 * @param string $message
+	 */
+	public function broadcastJavaChat(string $username, string $message): void
+	{
+		$this->getServer()->broadcastMessage("<" . $username . "> " . $message);
+	}
+
+	/**
+	 * Get ProtocolInterface
+	 * @return ProtocolInterface|null
+	 */
+	public function getInterface(): ?ProtocolInterface
+	{
+		return $this->interface;
+	}
+
+	protected function onEnable(): void
+	{
+		$this->saveDefaultConfig();
+		$this->saveResource("server-icon.png", false);
+		$this->reloadConfig();
+
+		ConvertUtils::init();
+
+		// Check if resources exist
+		if (!file_exists($this->getDataFolder() . "dimensionCodec.dat")) {
+			$this->saveResource("dimensionCodec.dat", true);
+		}
+		if (!file_exists($this->getDataFolder() . "dimension.dat")) {
+			$this->saveResource("dimension.dat", true);
+		}
+		if (!file_exists($this->getDataFolder() . "blockStateMapping.json")) {
+			$this->saveResource("blockStateMapping.json", true);
+		}
+
+		$this->dimensionCodec = file_get_contents($this->getDataFolder() . "dimensionCodec.dat") ?: "";
+		$this->dimension = file_get_contents($this->getDataFolder() . "dimension.dat") ?: "";
+
+		$this->getLogger()->info("OS: " . php_uname());
+		$this->getLogger()->info("PHP version: " . PHP_VERSION);
+		$this->getLogger()->info("PMMP Server version: " . $this->getServer()->getVersion());
+		$this->getLogger()->info("PMMP API version: " . $this->getServer()->getApiVersion());
+
+		if (!$this->setupComposer()) {
+			$this->getLogger()->critical("Composer autoloader not found. Run 'composer install' in the plugin directory.");
+			$this->getServer()->getPluginManager()->disablePlugin($this);
+			return;
+		}
+
+		if (!$this->getConfig()->exists("motd")) {
+			$this->getLogger()->warning("No motd has been set. The server description will be empty.");
+		}
+
+		$this->onlineMode = (bool)$this->getConfig()->get("online-mode", false);
+		if ($this->onlineMode) {
+			$this->getLogger()->info("Online mode is enabled - generating RSA keypair...");
+			$this->setupEncryption();
+		}
+
+		$this->desktopPrefix = (string)$this->getConfig()->get("desktop-prefix", "PC_");
+
+		$this->getLogger()->info("Starting Minecraft: Java Edition server on " .
+			($this->getIp() === "0.0.0.0" ? "*" : $this->getIp()) . ":" . $this->getPort() .
+			" version " . ServerThread::VERSION);
+
+		$this->getServer()->getPluginManager()->registerEvents($this, $this);
+
+		$this->translator = new Translator();
+		$this->interface = new ProtocolInterface(
+			$this,
+			$this->getServer(),
+			$this->translator,
+			(int)$this->getConfig()->get("network-compression-threshold", 256)
+		);
+
+		$this->getServer()->getNetwork()->registerInterface($this->interface);
+	}
+
+	private function setupComposer(): bool
+	{
+		$autoload = $this->getFile() . 'vendor/autoload.php';
+
+		if (is_file($autoload)) {
+			$this->getLogger()->info("Registering Composer autoloader...");
+			require_once $autoload;
+			return true;
+		}
+
+		// Try to find autoload in library folder
+		$libraryAutoload = $this->getFile() . 'library/autoload.php';
+		if (is_file($libraryAutoload)) {
+			$this->getLogger()->info("Registering library autoloader...");
+			require_once $libraryAutoload;
+			return true;
+		}
+
+		// No autoloader found, but we can still work without phpseclib (offline mode only)
+		$this->getLogger()->warning("No Composer autoloader found. Online mode will be disabled.");
+		$this->getLogger()->warning("To enable online mode, run 'composer install' in the BigBrother plugin directory.");
+		return true; // Return true so plugin still loads for offline mode
+	}
+
+	private function setupEncryption(): void
+	{
+		try {
+			if (!class_exists('\phpseclib3\Crypt\RSA')) {
+				$this->getLogger()->warning("phpseclib3 not found, online mode disabled");
+				$this->onlineMode = false;
+				return;
+			}
+			$rsa = RSA::createKey(1024);
+			$this->rsaKey = $rsa;
+			$this->privateKey = $rsa->toString('PKCS1');
+			$this->publicKey = $rsa->getPublicKey()->toString('PKCS8');
+			$this->getLogger()->info("RSA keypair generated successfully");
+		} catch (Throwable $e) {
+			$this->getLogger()->error("Failed to generate RSA keypair: " . $e->getMessage());
+			$this->onlineMode = false;
+		}
+	}
+
+	/**
+	 * @return string ip address
+	 */
+	public function getIp(): string
+	{
+		return (string)$this->getConfig()->get("interface", "0.0.0.0");
+	}
+
+	/**
+	 * @return int port
+	 */
+	public function getPort(): int
+	{
+		return (int)$this->getConfig()->get("port", 25565);
+	}
+
+	protected function onDisable(): void
+	{
+		if ($this->interface !== null) {
+			$this->interface->shutdown();
+		}
+	}
 }
 
-/**
- * Scope isolated require.
- *
- * prevents access to $this/self from included file
- * @param string $file
- * @return void
- */
-function __require(string $file){
-	/** @noinspection PhpIncludeInspection */
-	return require $file;
-}

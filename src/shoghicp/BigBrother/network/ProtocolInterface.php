@@ -9,6 +9,7 @@
  * BigBrother plugin for PocketMine-MP
  * Copyright (C) 2014-2015 shoghicp <https://github.com/shoghicp/BigBrother>
  * Copyright (C) 2016- BigBrotherTeam
+ * Copyright (C) 2026 - Updated for PocketMine-MP 5.x by XGDAVID <https://github.com/xgdavid>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -29,417 +30,300 @@ declare(strict_types=1);
 
 namespace shoghicp\BigBrother\network;
 
-use Exception;
-use SplObjectStorage;
-use const pocketmine\DEBUG;
-use pocketmine\network\mcpe\protocol\DataPacket;
-use pocketmine\network\SourceInterface;
+use pocketmine\network\NetworkInterface;
 use pocketmine\Server;
-use pocketmine\Player;
-use pocketmine\utils\MainLogger;
 use shoghicp\BigBrother\BigBrother;
-use shoghicp\BigBrother\DesktopPlayer;
-use shoghicp\BigBrother\network\protocol\Login\EncryptionResponsePacket;
-use shoghicp\BigBrother\network\protocol\Login\LoginStartPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\AdvancementTabPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\EnchantItemPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\TeleportConfirmPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\AnimatePacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\ConfirmTransactionPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\CraftRecipeRequestPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\CraftingBookDataPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\ClickWindowPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\ClientSettingsPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\ClientStatusPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\CreativeInventoryActionPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\EntityActionPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerAbilitiesPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\ChatPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\CloseWindowPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\HeldItemChangePacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\KeepAlivePacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerBlockPlacementPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerDiggingPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerLookPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerPositionAndLookPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PlayerPositionPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\PluginMessagePacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\TabCompletePacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\UpdateSignPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\UseEntityPacket;
-use shoghicp\BigBrother\network\protocol\Play\Client\UseItemPacket;
 use shoghicp\BigBrother\utils\Binary;
+use Throwable;
 
-class ProtocolInterface implements SourceInterface{
+class ProtocolInterface implements NetworkInterface
+{
 
-	/** @var BigBrother */
-	protected $plugin;
-	/** @var Server */
-	protected $server;
-	/** @var Translator */
-	protected $translator;
-	/** @var ServerThread */
-	protected $thread;
+    /** @var BigBrother */
+    protected BigBrother $plugin;
 
-	/** @var SplObjectStorage<int> */
-	protected $sessions;
+    /** @var Server */
+    protected Server $server;
 
-	/** @var DesktopPlayer[] */
-	protected $sessionsPlayers = [];
+    /** @var Translator */
+    protected Translator $translator;
 
-	/** @var int */
-	private $threshold;
+    /** @var ServerThread */
+    protected ServerThread $thread;
 
-	/**
-	 * @param BigBrother $plugin
-	 * @param Server     $server
-	 * @param Translator $translator
-	 * @param int        $threshold
-	 * @throws
-	 */
-	public function __construct(BigBrother $plugin, Server $server, Translator $translator, int $threshold){
-		$this->plugin = $plugin;
-		$this->server = $server;
-		$this->translator = $translator;
-		$this->threshold = $threshold;
-		$this->thread = new ServerThread($server->getLogger(), $server->getLoader(), $plugin->getPort(), $plugin->getIp(), $plugin->getMotd(), $plugin->getDataFolder()."server-icon.png", false);
-		$this->sessions = new SplObjectStorage();
-	}
+    /** @var array<int, JavaPlayer> */
+    protected array $sessions = [];
 
-	/**
-	 * @override
-	 */
-	public function start(){
-		$this->thread->start();
-	}
+    /** @var int */
+    private int $threshold;
 
-	/**
-	 * @override
-	 */
-	public function emergencyShutdown(){
-		$this->thread->pushMainToThreadPacket(chr(ServerManager::PACKET_EMERGENCY_SHUTDOWN));
-	}
+    /**
+     * @param BigBrother $plugin
+     * @param Server $server
+     * @param Translator $translator
+     * @param int $threshold
+     */
+    public function __construct(BigBrother $plugin, Server $server, Translator $translator, int $threshold)
+    {
+        $this->plugin = $plugin;
+        $this->server = $server;
+        $this->translator = $translator;
+        $this->threshold = $threshold;
 
-	/**
-	 * @override
-	 */
-	public function shutdown(){
-		$this->thread->pushMainToThreadPacket(chr(ServerManager::PACKET_SHUTDOWN));
-		$this->thread->join();
-	}
+        $this->thread = new ServerThread(
+            $server->getLogger(),
+            $plugin->getPort(),
+            $plugin->getIp(),
+            $plugin->getMotd(),
+            $plugin->getDataFolder() . "server-icon.png"
+        );
+    }
 
-	/**
-	 * @param string $name
-	 * @override
-	 */
-	public function setName(string $name){
-		$info = $this->plugin->getServer()->getQueryInformation();
-		$value = [
-			"MaxPlayers" => $info->getMaxPlayerCount(),
-			"OnlinePlayers" => $info->getPlayerCount(),
-		];
-		$buffer = chr(ServerManager::PACKET_SET_OPTION).chr(strlen("name"))."name".json_encode($value);
-		$this->thread->pushMainToThreadPacket($buffer);
-	}
+    /**
+     * @override
+     */
+    public function start(): void
+    {
+        $this->thread->start();
+        $this->plugin->getLogger()->info("Java Edition protocol interface started");
+    }
 
-	/**
-	 * @param int $identifier
-	 */
-	public function closeSession(int $identifier){
-		if(isset($this->sessionsPlayers[$identifier])){
-			$player = $this->sessionsPlayers[$identifier];
-			unset($this->sessionsPlayers[$identifier]);
-			$player->close($player->getLeaveMessage(), "Connection closed");
-		}
-	}
+    /**
+     * @override
+     */
+    public function setName(string $name): void
+    {
+        $info = $this->server->getQueryInformation();
+        $value = [
+            "MaxPlayers" => $info->getMaxPlayerCount(),
+            "OnlinePlayers" => $info->getPlayerCount(),
+        ];
+        $buffer = chr(ServerManager::PACKET_SET_OPTION) . chr(strlen("name")) . "name" . json_encode($value);
+        $this->thread->pushMainToThreadPacket($buffer);
+    }
 
-	/**
-	 * @param Player $player
-	 * @param string $reason
-	 * @override
-	 */
-	public function close(Player $player, string $reason = "unknown reason"){
-		if(isset($this->sessions[$player])){
-			/** @var int $identifier */
-			$identifier = $this->sessions[$player];
-			$this->sessions->detach($player);
-			$this->thread->pushMainToThreadPacket(chr(ServerManager::PACKET_CLOSE_SESSION) . Binary::writeInt($identifier));
-		}
-	}
+    /**
+     * @override
+     */
+    public function tick(): void
+    {
+        $this->process();
+    }
 
-	/**
-	 * @param int    $target
-	 * @param Packet $packet
-	 */
-	protected function sendPacket(int $target, Packet $packet){
-		if(DEBUG > 4){
-			$id = bin2hex(chr($packet->pid()));
-			if($id !== "1f"){
-				echo "[Send][Interface] 0x".bin2hex(chr($packet->pid()))."\n";
-			}
-		}
+    /**
+     * Process incoming packets from the server thread
+     */
+    protected function process(): void
+    {
+        while (($packet = $this->thread->readThreadToMainPacket()) !== null && strlen($packet) > 0) {
+            $id = ord($packet[0]);
+            $offset = 1;
 
-		$data = chr(ServerManager::PACKET_SEND_PACKET) . Binary::writeInt($target) . $packet->write();
-		$this->thread->pushMainToThreadPacket($data);
-	}
+            switch ($id) {
+                case ServerManager::PACKET_OPEN_SESSION:
+                    $identifier = Binary::readInt(substr($packet, $offset, 4));
+                    $offset += 4;
+                    $addressLength = ord($packet[$offset++]);
+                    $address = substr($packet, $offset, $addressLength);
+                    $offset += $addressLength;
+                    $port = Binary::readShort(substr($packet, $offset, 2));
 
-	/**
-	 * @param DesktopPlayer $player
-	 */
-	public function setCompression(DesktopPlayer $player){
-		if(isset($this->sessions[$player])){
-			/** @var int $target */
-			$target = $this->sessions[$player];
-			$data = chr(ServerManager::PACKET_SET_COMPRESSION) . Binary::writeInt($target) . Binary::writeInt($this->threshold);
-			$this->thread->pushMainToThreadPacket($data);
-		}
-	}
+                    $this->openSession($identifier, $address, $port);
+                    break;
 
-	/**
-	 * @param DesktopPlayer $player
-	 * @param string        $secret
-	 */
-	public function enableEncryption(DesktopPlayer $player, string $secret){
-		if(isset($this->sessions[$player])){
-			/** @var int $target */
-			$target = $this->sessions[$player];
-			$data = chr(ServerManager::PACKET_ENABLE_ENCRYPTION) . Binary::writeInt($target) . $secret;
-			$this->thread->pushMainToThreadPacket($data);
-		}
-	}
+                case ServerManager::PACKET_CLOSE_SESSION:
+                    $identifier = Binary::readInt(substr($packet, $offset, 4));
+                    $this->closeSession($identifier);
+                    break;
 
-	/**
-	 * @param DesktopPlayer $player
-	 * @param Packet        $packet
-	 */
-	public function putRawPacket(DesktopPlayer $player, Packet $packet){
-		if(isset($this->sessions[$player])){
-			/** @var int $target */
-			$target = $this->sessions[$player];
-			$this->sendPacket($target, $packet);
-		}
-	}
+                case ServerManager::PACKET_RECEIVE_PACKET:
+                    $identifier = Binary::readInt(substr($packet, $offset, 4));
+                    $offset += 4;
+                    $buffer = substr($packet, $offset);
+                    $this->handlePacket($identifier, $buffer);
+                    break;
+            }
+        }
+    }
 
-	/**
-	 * @param Player     $player
-	 * @param DataPacket $packet
-	 * @param bool       $needACK
-	 * @param bool       $immediate
-	 *
-	 * @return int|null
-	 * @override
-	 */
-	public function putPacket(Player $player, DataPacket $packet, bool $needACK = false, bool $immediate = true){
-		assert($player instanceof DesktopPlayer);
-		$packets = $this->translator->serverToInterface($player, $packet);
-		if($packets !== null and $this->sessions->contains($player)){
-			/** @var int $target */
-			$target = $this->sessions[$player];
-			if(is_array($packets)){
-				foreach($packets as $packet){
-					$this->sendPacket($target, $packet);
-				}
-			}else{
-				$this->sendPacket($target, $packets);
-			}
-		}
+    /**
+     * Open a new session
+     *
+     * @param int $identifier
+     * @param string $address
+     * @param int $port
+     */
+    protected function openSession(int $identifier, string $address, int $port): void
+    {
+        $this->sessions[$identifier] = new JavaPlayer($this, $identifier, $address, $port, $this->plugin);
+        $this->plugin->getLogger()->debug("New Java Edition connection from $address:$port (session $identifier)");
+    }
 
-		return null;
-	}
+    /**
+     * Close a session (called when receiving PACKET_CLOSE_SESSION from thread)
+     *
+     * @param int $identifier
+     */
+    public function closeSession(int $identifier): void
+    {
+        if (isset($this->sessions[$identifier])) {
+            $player = $this->sessions[$identifier];
+            unset($this->sessions[$identifier]);
+            $this->plugin->getLogger()->info("Java Edition player '{$player->getUsername()}' disconnected");
+        }
+    }
 
-	/**
-	 * @param DesktopPlayer $player
-	 * @param Packet        $packet
-	 */
-	protected function receivePacket(DesktopPlayer $player, Packet $packet){
-		$packets = $this->translator->interfaceToServer($player, $packet);
-		if($packets !== null){
-			if(is_array($packets)){
-				foreach($packets as $packet){
-					$player->handleDataPacket($packet);
-				}
-			}else{
-				$player->handleDataPacket($packets);
-			}
-		}
-	}
+    /**
+     * Handle incoming packet
+     *
+     * @param int $identifier
+     * @param string $buffer
+     */
+    protected function handlePacket(int $identifier, string $buffer): void
+    {
+        if (isset($this->sessions[$identifier])) {
+            $this->sessions[$identifier]->handleRawPacket($buffer);
+        }
+    }
 
-	/**
-	 * @param DesktopPlayer $player
-	 * @param string        $payload
-	 */
-	protected function handlePacket(DesktopPlayer $player, string $payload){
-		if(DEBUG > 4){
-			$id = bin2hex(chr(ord($payload[0])));
-			if($id !== "0b"){//KeepAlivePacket
-				echo "[Receive][Interface] 0x".bin2hex(chr(ord($payload[0])))."\n";
-			}
-		}
+    /**
+     * Close a session and notify the thread
+     *
+     * @param int $identifier
+     */
+    public function closeSessionFromMain(int $identifier): void
+    {
+        if (isset($this->sessions[$identifier])) {
+            $player = $this->sessions[$identifier];
+            unset($this->sessions[$identifier]);
+            // Send close packet to thread
+            $buffer = chr(ServerManager::PACKET_CLOSE_SESSION) . Binary::writeInt($identifier);
+            $this->thread->pushMainToThreadPacket($buffer);
+        }
+    }
 
-		$pid = ord($payload[0]);
-		$offset = 1;
+    /**
+     * @override
+     */
+    public function shutdown(): void
+    {
+        $this->thread->pushMainToThreadPacket(chr(ServerManager::PACKET_SHUTDOWN));
+        $this->thread->join();
+    }
 
-		$status = $player->bigBrother_getStatus();
+    /**
+     * Send packet to client
+     *
+     * @param int $identifier
+     * @param Packet $packet
+     */
+    public function sendPacket(int $identifier, Packet $packet): void
+    {
+        try {
+            $data = chr(ServerManager::PACKET_SEND_PACKET) . Binary::writeInt($identifier) . $packet->write();
+            $this->thread->pushMainToThreadPacket($data);
+        } catch (Throwable $e) {
+            $this->plugin->getLogger()->debug("Failed to send packet: " . $e->getMessage());
+        }
+    }
 
-		if($status === 1){
-			switch($pid){
-				case InboundPacket::TELEPORT_CONFIRM_PACKET:
-					$pk = new TeleportConfirmPacket();
-					break;
-				case InboundPacket::TAB_COMPLETE_PACKET:
-					$pk = new TabCompletePacket();
-					break;
-				case InboundPacket::CHAT_PACKET:
-					$pk = new ChatPacket();
-					break;
-				case InboundPacket::CLIENT_STATUS_PACKET:
-					$pk = new ClientStatusPacket();
-					break;
-				case InboundPacket::CLIENT_SETTINGS_PACKET:
-					$pk = new ClientSettingsPacket();
-					break;
-				case InboundPacket::CONFIRM_TRANSACTION_PACKET:
-					$pk = new ConfirmTransactionPacket();
-					break;
-				case InboundPacket::ENCHANT_ITEM_PACKET:
-					$pk = new EnchantItemPacket();
-					break;
-				case InboundPacket::CLICK_WINDOW_PACKET:
-					$pk = new ClickWindowPacket();
-					break;
-				case InboundPacket::CLOSE_WINDOW_PACKET:
-					$pk = new CloseWindowPacket();
-					break;
-				case InboundPacket::PLUGIN_MESSAGE_PACKET:
-					$pk = new PluginMessagePacket();
-					break;
-				case InboundPacket::USE_ENTITY_PACKET:
-					$pk = new UseEntityPacket();
-					break;
-				case InboundPacket::KEEP_ALIVE_PACKET:
-					$pk = new KeepAlivePacket();
-					break;
-				case InboundPacket::PLAYER_PACKET:
-					$pk = new PlayerPacket();
-					break;
-				case InboundPacket::PLAYER_POSITION_PACKET:
-					$pk = new PlayerPositionPacket();
-					break;
-				case InboundPacket::PLAYER_POSITION_AND_LOOK_PACKET:
-					$pk = new PlayerPositionAndLookPacket();
-					break;
-				case InboundPacket::PLAYER_LOOK_PACKET:
-					$pk = new PlayerLookPacket();
-					break;
-				case InboundPacket::CRAFT_RECIPE_REQUEST_PACKET:
-					$pk = new CraftRecipeRequestPacket();
-				break;
-				case InboundPacket::PLAYER_ABILITIES_PACKET:
-					$pk = new PlayerAbilitiesPacket();
-					break;
-				case InboundPacket::PLAYER_DIGGING_PACKET:
-					$pk = new PlayerDiggingPacket();
-					break;
-				case InboundPacket::ENTITY_ACTION_PACKET:
-					$pk = new EntityActionPacket();
-					break;
-				case InboundPacket::CRAFTING_BOOK_DATA_PACKET:
-					$pk = new CraftingBookDataPacket();
-					break;
-				case InboundPacket::ADVANCEMENT_TAB_PACKET:
-					$pk = new AdvancementTabPacket();
-					break;
-				case InboundPacket::HELD_ITEM_CHANGE_PACKET:
-					$pk = new HeldItemChangePacket();
-					break;
-				case InboundPacket::CREATIVE_INVENTORY_ACTION_PACKET:
-					$pk = new CreativeInventoryActionPacket();
-					break;
-				case InboundPacket::UPDATE_SIGN_PACKET:
-					$pk = new UpdateSignPacket();
-					break;
-				case InboundPacket::ANIMATE_PACKET:
-					$pk = new AnimatePacket();
-					break;
-				case InboundPacket::PLAYER_BLOCK_PLACEMENT_PACKET:
-					$pk = new PlayerBlockPlacementPacket();
-					break;
-				case InboundPacket::USE_ITEM_PACKET:
-					$pk = new UseItemPacket();
-					break;
-				default:
-					if(DEBUG > 4){
-						echo "[Receive][Interface] 0x".bin2hex(chr($pid))." Not implemented\n"; //Debug
-					}
-					return;
-			}
+    /**
+     * Send raw data to client
+     *
+     * @param int $identifier
+     * @param string $data
+     */
+    public function sendRaw(int $identifier, string $data): void
+    {
+        $buffer = chr(ServerManager::PACKET_SEND_PACKET) . Binary::writeInt($identifier) . $data;
+        $this->thread->pushMainToThreadPacket($buffer);
+    }
 
-			$pk->read($payload, $offset);
-			$this->receivePacket($player, $pk);
-		}elseif($status === 0){
-			if($pid === InboundPacket::LOGIN_START_PACKET){
-				$pk = new LoginStartPacket();
-				$pk->read($payload, $offset);
-				$player->bigBrother_handleAuthentication($pk->name, $this->plugin->isOnlineMode());
-			}elseif($pid === InboundPacket::ENCRYPTION_RESPONSE_PACKET and $this->plugin->isOnlineMode()){
-				$pk = new EncryptionResponsePacket();
-				$pk->read($payload, $offset);
-				$player->bigBrother_processAuthentication($pk);
-			}else{
-				$player->close($player->getLeaveMessage(), "Unexpected packet $pid");
-			}
-		}
-	}
+    /**
+     * Enable compression for a session
+     *
+     * @param int $identifier
+     */
+    public function setCompression(int $identifier): void
+    {
+        $buffer = chr(ServerManager::PACKET_SET_COMPRESSION) . Binary::writeInt($identifier) . Binary::writeInt($this->threshold);
+        $this->thread->pushMainToThreadPacket($buffer);
+    }
 
-	/**
-	 * @override
-	 */
-	public function process() : void{
-		while(is_string($buffer = $this->thread->readThreadToMainPacket())){
-			$offset = 1;
-			$pid = ord($buffer[0]);
+    /**
+     * Enable encryption for a session
+     *
+     * @param int $identifier
+     * @param string $secret
+     */
+    public function enableEncryption(int $identifier, string $secret): void
+    {
+        $buffer = chr(ServerManager::PACKET_ENABLE_ENCRYPTION) . Binary::writeInt($identifier) . $secret;
+        $this->thread->pushMainToThreadPacket($buffer);
+    }
 
-			if($pid === ServerManager::PACKET_SEND_PACKET){
-				$id = Binary::readInt(substr($buffer, $offset, 4));
-				$offset += 4;
-				if(isset($this->sessionsPlayers[$id])){
-					$payload = substr($buffer, $offset);
-					try{
-						$this->handlePacket($this->sessionsPlayers[$id], $payload);
-					}catch(Exception $e){
-						if(DEBUG > 1){
-							$logger = $this->server->getLogger();
-							if($logger instanceof MainLogger){
-								$logger->debug("DesktopPacket 0x" . bin2hex($payload));
-								$logger->logException($e);
-							}
-						}
-					}
-				}
-			}elseif($pid === ServerManager::PACKET_OPEN_SESSION){
-				$id = Binary::readInt(substr($buffer, $offset, 4));
-				$offset += 4;
-				if(isset($this->sessionsPlayers[$id])){
-					continue;
-				}
-				$len = ord($buffer[$offset++]);
-				$address = substr($buffer, $offset, $len);
-				$offset += $len;
-				$port = Binary::readShort(substr($buffer, $offset, 2));
+    /**
+     * @return BigBrother
+     */
+    public function getPlugin(): BigBrother
+    {
+        return $this->plugin;
+    }
 
-				$identifier = "$id:$address:$port";
+    /**
+     * @return Server
+     */
+    public function getServer(): Server
+    {
+        return $this->server;
+    }
 
-				$player = new DesktopPlayer($this, $identifier, $address, $port, $this->plugin);
-				$this->sessions->attach($player, $id);
-				$this->sessionsPlayers[$id] = $player;
-				$this->plugin->getServer()->addPlayer($player);
-			}elseif($pid === ServerManager::PACKET_CLOSE_SESSION){
-				$id = Binary::readInt(substr($buffer, $offset, 4));
+    /**
+     * @return Translator
+     */
+    public function getTranslator(): Translator
+    {
+        return $this->translator;
+    }
 
-				$this->closeSession($id);
-			}
+    /**
+     * @return int
+     */
+    public function getThreshold(): int
+    {
+        return $this->threshold;
+    }
 
-		}
-	}
+    /**
+     * Broadcast a chat message to all Java players
+     *
+     * @param string $message
+     */
+    public function broadcastChatToJava(string $message): void
+    {
+        foreach ($this->sessions as $session) {
+            $session->sendChatMessage($message);
+        }
+    }
+
+    /**
+     * Get all connected Java players
+     *
+     * @return JavaPlayer[]
+     */
+    public function getJavaPlayers(): array
+    {
+        return $this->sessions;
+    }
+
+    /**
+     * Get Java player count
+     *
+     * @return int
+     */
+    public function getJavaPlayerCount(): int
+    {
+        return count($this->sessions);
+    }
 }
+

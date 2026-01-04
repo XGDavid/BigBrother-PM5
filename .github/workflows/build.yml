@@ -4,7 +4,7 @@ jobs:
   docker:
     name: build docker image
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'BigBrotherTeam' && github.ref == 'refs/head/base' }}
+    if: ${{ github.repository_owner == 'lovetwice1012' && github.ref == 'refs/head/base' }}
     strategy:
       matrix:
         php:
@@ -33,7 +33,6 @@ jobs:
           tags: |
             ghcr.io/bigbrotherteam/bigbrother/php:${{ matrix.php }}
             ghcr.io/bigbrotherteam/bigbrother/php:latest
-
       - name: Push Docker image
         run: docker push ghcr.io/bigbrotherteam/bigbrother/php:${{ matrix.php }}
 
@@ -63,7 +62,6 @@ jobs:
       - name: build
         run: |
           composer build
-
       - name: upload artifact
         uses: actions/upload-artifact@v2
         if: ${{ matrix.php == '7.4.13' && github.ref != 'refs/heads/base' }}

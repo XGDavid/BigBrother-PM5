@@ -1,13 +1,26 @@
-#Configuration file for BigBrother plugin
+# Configuration file for BigBrother plugin
+# Allows Minecraft: Java Edition clients to connect to PocketMine-MP servers
 
-#Do not change the interface if you don't know what you are doing. It's good as it is now
-interface: 0.0.0.0
+# Network interface to bind to (0.0.0.0 = all interfaces)
+interface: "0.0.0.0"
+
+# Port for Java Edition clients (default Minecraft port)
 port: 25565
 
+# Compression threshold for network packets (in bytes)
+# Packets larger than this will be compressed
 network-compression-threshold: 256
 
-#Sets the server description on the server list
-motd: "§bPocketMine-MP server using §6§lBigBrother§r§b plugin\n§aConnect to Minecraft: PE servers from PC clients"
+# Server description shown in the server list
+# Supports Minecraft color codes (§)
+motd: "§bPocketMine-MP Server\n§aUsing BigBrother for Java Edition support"
 
-#Use Mojang services to authenticate players
-online-mode: true
+# Use Mojang authentication services
+# Set to false for offline/cracked mode
+# Note: Online mode requires phpseclib3 (composer install)
+online-mode: false
+
+# Prefix added to Java Edition player names
+# Helps distinguish Java players from Bedrock players
+desktop-prefix: "PC_"
+

@@ -9,6 +9,7 @@
  * BigBrother plugin for PocketMine-MP
  * Copyright (C) 2014-2015 shoghicp <https://github.com/shoghicp/BigBrother>
  * Copyright (C) 2016- BigBrotherTeam
+ * Copyright (C) 2026 - Updated for PocketMine-MP 5.x by XGDAVID <https://github.com/xgdavid>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -31,16 +32,20 @@ namespace shoghicp\BigBrother\network\protocol\Login;
 
 use shoghicp\BigBrother\network\OutboundPacket;
 
-class LoginDisconnectPacket extends OutboundPacket{
+class LoginDisconnectPacket extends OutboundPacket
+{
 
-	/** @var string */
-	public $reason;
+	/** @var string JSON formatted reason */
+	public string $reason = "";
 
-	public function pid() : int{
+	public function pid(): int
+	{
 		return self::LOGIN_DISCONNECT_PACKET;
 	}
 
-	protected function encode() : void{
+	protected function encode(): void
+	{
 		$this->putString($this->reason);
 	}
 }
+
