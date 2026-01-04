@@ -103,7 +103,7 @@ The following core files have been rewritten for PocketMine-MP 5.x:
 
 - **shoghicp** - Original BigBrother creator
 - **BigBrotherTeam** - Maintenance and updates
-- **[XGDAVID](https://github.com/xgdavid)** - PocketMine-MP 5.x port (2026)
+- **[XGDAVID](https://github.com/xgdavid)** - Update for PocketMine-MP 5.x (2026)
 - **hmy2001, eternalharvest, SuperMaXAleX, caspervanneck, DrewD3V** - Original contributors
 
 ## License
