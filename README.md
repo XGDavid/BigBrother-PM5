@@ -2,6 +2,9 @@
 
 **Allows Minecraft: Java Edition clients to connect to PocketMine-MP servers**
 
+# ⚠️ **NOTE:** A new project with the same goal, targeting a newer Minecraft version (1.18.2) and much more optimized, is currently in development: **XGTJavaBridge**.  
+For more information and updates, join the [Discord](https://discord.gg/nPDC7FPbw8)
+
 ![Chat Working](image.png)
 
 ## ⚠️ IMPORTANT DISCLAIMER
